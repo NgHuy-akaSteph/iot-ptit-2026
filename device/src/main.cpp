@@ -2,7 +2,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include "DHT.h"
+#include <DHT.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
@@ -30,7 +30,7 @@ const float V_C = 5.0, R_L = 10.0, R_0 = 1.87;
 const float CONST_A = 116.602, CONST_B = -2.769;
 const float EMA_ALPHA = 0.1;
 
-const int pwmChannel = 0;
+const int pwmChannel = 4;
 const int pwmFreq = 25000;
 const int pwmResolution = 8;
 
@@ -224,21 +224,29 @@ void controlTask(void *pvParameters)
     }
 
     if (buzzerOn)
-      tone(BUZZER_PIN, 2000);
+      tone(BUZZER_PIN, 2500);
     else
       noTone(BUZZER_PIN);
 
     if (fanLevel != currentFanLevel)
     {
       bool canChange = false;
-      if (fanLevel > currentFanLevel)
+
+      if (!autoMode)
+      {
         canChange = true;
-      else if (currentFanLevel == 3 && millis() - lastFanChangeTime >= 30000)
-        canChange = true;
-      else if (currentFanLevel == 2 && millis() - lastFanChangeTime >= 20000)
-        canChange = true;
-      else if (currentFanLevel <= 1)
-        canChange = true;
+      }
+      else
+      {
+        if (fanLevel > currentFanLevel)
+          canChange = true;
+        else if (currentFanLevel == 3 && millis() - lastFanChangeTime >= 30000)
+          canChange = true;
+        else if (currentFanLevel == 2 && millis() - lastFanChangeTime >= 20000)
+          canChange = true;
+        else if (currentFanLevel <= 1)
+          canChange = true;
+      }
 
       if (canChange)
       {
@@ -250,20 +258,20 @@ void controlTask(void *pvParameters)
         else
           digitalWrite(FAN_RELAY_PIN, HIGH);
 
-        int percent = (currentFanLevel == 1)   ? 30
-                      : (currentFanLevel == 2) ? 70
+        int percent = (currentFanLevel == 1)   ? 60
+                      : (currentFanLevel == 2) ? 80
                       : (currentFanLevel == 3) ? 100
                                                : 0;
 
-        int duty = map(percent, 0, 100, 0, 255);
+        int duty = map(percent, 0, 100, 255, 0);
         ledcWrite(pwmChannel, duty);
       }
     }
+
     vTaskDelay(pdMS_TO_TICKS(500));
   }
 }
 
-// Bổ sung Task dành riêng cho 1 màn hình LCD
 void displayTask(void *pvParameters)
 {
   char rowBuffer[17];
@@ -315,6 +323,11 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
   for (unsigned int i = 0; i < length; i++)
     msg += (char)payload[i];
 
+  // 1. Tách Request ID ra khỏi Topic
+  String topicStr = String(topic);
+  int lastSlash = topicStr.lastIndexOf('/');
+  String requestId = topicStr.substring(lastSlash + 1);
+
   StaticJsonDocument<200> doc;
   DeserializationError error = deserializeJson(doc, msg);
   if (error)
@@ -322,6 +335,7 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
 
   String method = doc["method"].as<String>();
 
+  // 2. Xử lý logic phần cứng
   if (method == "setAutoMode")
   {
     autoMode = doc["params"].as<bool>();
@@ -332,9 +346,13 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
   }
   else if (method == "setFan" && !autoMode)
   {
-    fanLevel = doc["params"].as<int>();
+    String rawParam = doc["params"].as<String>();
+    fanLevel = rawParam.toInt();
     alarmOn(1, 100);
   }
+
+  String responseTopic = "v1/devices/me/rpc/response/" + requestId;
+  mqtt.publish(responseTopic.c_str(), "{\"status\":\"success\"}");
 }
 
 void mqttTask(void *pvParameters)
