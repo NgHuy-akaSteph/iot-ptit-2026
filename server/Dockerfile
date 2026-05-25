@@ -2,6 +2,7 @@
 FROM gradle:8.12-jdk21 AS build
 WORKDIR /app
 COPY . .
+RUN chmod +x gradlew
 RUN ./gradlew build -x test --no-daemon
 
 # Stage 2: Run the application in a lightweight JRE environment
