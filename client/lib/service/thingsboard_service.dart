@@ -13,7 +13,7 @@ class TelemetryEntry {
 class ThingsBoardService {
   final Dio _dio = Dio();
   final AuthService _authService = AuthService();
-  final String _baseUrl = 'http://localhost:8080/api';
+  final String _baseUrl = 'https://iot-ptit-bff.onrender.com/api';
 
   // Hardcoded device ID - user will provide this
   static const String deviceId = 'b8efca70-518c-11f1-befc-1dd22c41a268';

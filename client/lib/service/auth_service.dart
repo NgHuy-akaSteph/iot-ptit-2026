@@ -5,7 +5,7 @@ class AuthService {
   final Dio _dio = Dio();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
-  final String _baseUrl = 'http://localhost:8080/api';
+  final String _baseUrl = 'https://iot-ptit-bff.onrender.com/api';
 
   Future<bool> login(String email, String password) async {
     try {
