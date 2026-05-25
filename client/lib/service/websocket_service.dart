@@ -16,7 +16,7 @@ class WebSocketService {
 
   Future<void> connect() async {
     try {
-      final token = await _authService.getToken();
+      final token = await _authService.getTbToken();
       if (token == null) return;
 
       final uri = Uri.parse('wss://thingsboard.cloud/api/ws/plugins/telemetry?token=$token');

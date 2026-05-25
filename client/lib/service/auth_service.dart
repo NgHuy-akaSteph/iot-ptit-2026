@@ -5,7 +5,7 @@ class AuthService {
   final Dio _dio = Dio();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
-  final String _baseUrl = 'https://thingsboard.cloud/api';
+  final String _baseUrl = 'http://localhost:8080/api';
 
   Future<bool> login(String email, String password) async {
     try {
@@ -16,28 +16,30 @@ class AuthService {
 
       // Nếu ThingsBoard trả về 200 OK -> Đăng nhập thành công
       if (response.statusCode == 200) {
-        // Rút trích chuỗi Token từ cục JSON trả về
         final String token = response.data['token'];
+        final String tbToken = response.data['tbToken'];
 
-        // Cất Token vào vùng nhớ bảo mật của điện thoại
         await _storage.write(key: 'jwt_token', value: token);
+        await _storage.write(key: 'tb_token', value: tbToken);
         return true;
       }
       return false;
     } catch (e) {
-      // Bắt lỗi sai pass, sai email, hoặc mất mạng
       return false;
     }
   }
 
-  // Hàm tiện ích để móc Token ra dùng cho các API sau này
   Future<String?> getToken() async {
     return await _storage.read(key: 'jwt_token');
   }
 
-  // Hàm Đăng xuất (xóa Token)
+  Future<String?> getTbToken() async {
+    return await _storage.read(key: 'tb_token');
+  }
+
   Future<void> logout() async {
     await _storage.delete(key: 'jwt_token');
+    await _storage.delete(key: 'tb_token');
   }
   
 }

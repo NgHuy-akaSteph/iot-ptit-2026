@@ -13,7 +13,7 @@ class TelemetryEntry {
 class ThingsBoardService {
   final Dio _dio = Dio();
   final AuthService _authService = AuthService();
-  final String _baseUrl = 'https://thingsboard.cloud/api';
+  final String _baseUrl = 'http://localhost:8080/api';
 
   // Hardcoded device ID - user will provide this
   static const String deviceId = 'b8efca70-518c-11f1-befc-1dd22c41a268';
@@ -24,12 +24,9 @@ class ThingsBoardService {
       if (token == null) return null;
 
       final response = await _dio.get(
-        '$_baseUrl/plugins/telemetry/DEVICE/$deviceId/values/timeseries',
-        queryParameters: {
-          'keys': 'temperature,humidity,dust_ug,gas_ppm,auto_mode,fan_level',
-        },
+        '$_baseUrl/devices/$deviceId/telemetry/latest',
         options: Options(
-          headers: {'X-Authorization': 'Bearer $token'},
+          headers: {'Authorization': 'Bearer $token'},
         ),
       );
 
@@ -48,40 +45,29 @@ class ThingsBoardService {
       final token = await _authService.getToken();
       if (token == null) return null;
 
-      final now = DateTime.now().millisecondsSinceEpoch;
-      int startTs;
-      int limit;
-
+      String rangeStr;
       switch (range) {
         case TimeRange.oneMinute:
-          startTs = now - 60 * 1000;
-          limit = 10;
+          rangeStr = 'oneMinute';
           break;
         case TimeRange.oneHour:
-          startTs = now - 60 * 60 * 1000;
-          limit = 60;
+          rangeStr = 'oneHour';
           break;
         case TimeRange.oneDay:
-          startTs = now - 24 * 60 * 60 * 1000;
-          limit = 144;
+          rangeStr = 'oneDay';
           break;
         case TimeRange.oneWeek:
-          startTs = now - 7 * 24 * 60 * 60 * 1000;
-          limit = 168;
+          rangeStr = 'oneWeek';
           break;
       }
 
       final response = await _dio.get(
-        '$_baseUrl/plugins/telemetry/DEVICE/$deviceId/values/timeseries',
+        '$_baseUrl/devices/$deviceId/telemetry/history',
         queryParameters: {
-          'keys': 'temperature,humidity,dust_ug,gas_ppm',
-          'startTs': startTs,
-          'endTs': now,
-          'limit': limit,
-          'orderBy': 'DESC',
+          'range': rangeStr,
         },
         options: Options(
-          headers: {'X-Authorization': 'Bearer $token'},
+          headers: {'Authorization': 'Bearer $token'},
         ),
       );
 
@@ -98,7 +84,7 @@ class ThingsBoardService {
             final value = rawValue is num ? rawValue.toDouble() : double.tryParse(rawValue.toString()) ?? 0.0;
             return TelemetryEntry(DateTime.fromMillisecondsSinceEpoch(ts), value);
           }).toList();
-          // ThingsBoard returns DESC order; reverse to chronological
+          // Sort to chronological
           result[key]!.sort((a, b) => a.timestamp.compareTo(b.timestamp));
         }
 
@@ -124,13 +110,13 @@ class ThingsBoardService {
       if (token == null) return false;
 
       final response = await _dio.post(
-        '$_baseUrl/plugins/rpc/twoway/$deviceId',
+        '$_baseUrl/devices/$deviceId/rpc',
         data: {
           'method': method,
           'params': params,
         },
         options: Options(
-          headers: {'X-Authorization': 'Bearer $token'},
+          headers: {'Authorization': 'Bearer $token'},
         ),
       );
 
