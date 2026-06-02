@@ -39,7 +39,7 @@ public class SecurityConfig {
             .cors(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/login", "/api/devices/telemetry/webhook").permitAll()
+                .requestMatchers("/api/auth/login", "/api/devices/telemetry/webhook", "/error").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(new BffJwtFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
@@ -52,6 +52,11 @@ public class SecurityConfig {
 
         public BffJwtFilter(JwtService jwtService) {
             this.jwtService = jwtService;
+        }
+
+        @Override
+        protected boolean shouldNotFilterAsyncDispatch() {
+            return false;
         }
 
         @Override
