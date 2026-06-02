@@ -37,6 +37,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   TimeRange _selectedRange = TimeRange.oneHour;
   bool _isLoadingHistory = false;
 
+  DateTime? _ignoreAutoModeUntil;
+  DateTime? _ignoreFanLevelUntil;
+
   @override
   void initState() {
     super.initState();
@@ -54,13 +57,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() => _isDarkMode = isDark);
   }
 
+  void _updateCurrentData(EnvironmentData incomingData) {
+    final keepLocalAutoMode = _ignoreAutoModeUntil != null && DateTime.now().isBefore(_ignoreAutoModeUntil!);
+    final keepLocalFanLevel = _ignoreFanLevelUntil != null && DateTime.now().isBefore(_ignoreFanLevelUntil!);
+
+    setState(() {
+      _currentData = EnvironmentData(
+        temperature: incomingData.temperature,
+        humidity: incomingData.humidity,
+        dustUg: incomingData.dustUg,
+        gasPpm: incomingData.gasPpm,
+        autoMode: keepLocalAutoMode ? _currentData.autoMode : incomingData.autoMode,
+        fanLevel: keepLocalFanLevel ? _currentData.fanLevel : incomingData.fanLevel,
+      );
+    });
+  }
+
   Future<void> _initializeConnection() async {
     try {
       await _wsService.connect();
 
       _wsService.telemetryStream.listen((data) {
+        final incoming = EnvironmentData.fromThingsBoard(data, _currentData);
+        _updateCurrentData(incoming);
+
         setState(() {
-          _currentData = EnvironmentData.fromThingsBoard(data, _currentData);
           _isLoading = false;
           _errorMessage = '';
 
@@ -78,8 +99,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       final telemetry = await _tbService.getLatestTelemetry();
       if (telemetry != null) {
+        final incoming = EnvironmentData.fromThingsBoard(telemetry, _currentData);
+        _updateCurrentData(incoming);
         setState(() {
-          _currentData = EnvironmentData.fromThingsBoard(telemetry, _currentData);
           _isLoading = false;
         });
       }
@@ -172,6 +194,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _handleAutoModeChange(bool enabled) async {
     final oldAutoMode = _currentData.autoMode;
 
+    // Set lock to ignore periodic telemetry packets until device processes the change
+    _ignoreAutoModeUntil = DateTime.now().add(const Duration(seconds: 4));
+
     // Optimistically update the UI state
     setState(() {
       _currentData = EnvironmentData(
@@ -186,7 +211,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final success = await _tbService.setAutoMode(enabled);
     if (!success) {
-      // Rollback to previous state on failure
+      // Clear ignore lock on failure so rollback applies instantly
+      _ignoreAutoModeUntil = null;
       if (mounted) {
         setState(() {
           _currentData = EnvironmentData(
@@ -221,6 +247,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final oldFanLevel = _currentData.fanLevel;
 
+    // Set lock to ignore periodic telemetry packets until device processes the change
+    _ignoreFanLevelUntil = DateTime.now().add(const Duration(seconds: 4));
+
     // Optimistically update the UI state
     setState(() {
       _currentData = EnvironmentData(
@@ -235,7 +264,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final success = await _tbService.setFanLevel(level);
     if (!success) {
-      // Rollback to previous state on failure
+      // Clear ignore lock on failure so rollback applies instantly
+      _ignoreFanLevelUntil = null;
       if (mounted) {
         setState(() {
           _currentData = EnvironmentData(
@@ -262,9 +292,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       onRefresh: () async {
         final telemetry = await _tbService.getLatestTelemetry();
         if (telemetry != null && mounted) {
-          setState(() {
-            _currentData = EnvironmentData.fromThingsBoard(telemetry, _currentData);
-          });
+          final incoming = EnvironmentData.fromThingsBoard(telemetry, _currentData);
+          _updateCurrentData(incoming);
         }
       },
       child: SingleChildScrollView(

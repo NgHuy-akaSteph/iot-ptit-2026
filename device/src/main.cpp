@@ -340,9 +340,17 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
   {
     autoMode = doc["params"].as<bool>();
     if (autoMode)
+    {
       alarmOn(2, 80);
+      fanLevel = 0;
+      currentFanLevel = 0;
+      digitalWrite(FAN_RELAY_PIN, LOW);
+      ledcWrite(pwmChannel, 255);
+    }
     else
+    {
       alarmOn(1, 300);
+    }
   }
   else if (method == "setFan" && !autoMode)
   {

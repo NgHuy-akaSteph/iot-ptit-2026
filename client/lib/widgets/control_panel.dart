@@ -32,7 +32,7 @@ class ControlPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final segmentLabels = ['Thấp', 'Trung', 'Cao'];
+    final segmentLabels = ['1', '2', '3'];
     final segmentValues = [1, 2, 3];
 
     return Column(

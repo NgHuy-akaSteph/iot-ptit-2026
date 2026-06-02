@@ -122,6 +122,11 @@ class ThingsBoardService {
 
       return response.statusCode == 200;
     } catch (e) {
+      if (e is DioException) {
+        print('=== RPC ERROR ===: Status: ${e.response?.statusCode} | Body: ${e.response?.data}');
+      } else {
+        print('=== RPC ERROR ===: $e');
+      }
       return false;
     }
   }
