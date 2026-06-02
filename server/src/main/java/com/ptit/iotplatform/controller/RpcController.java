@@ -28,7 +28,12 @@ public class RpcController {
         String tbToken = auth.getCredentials().toString();
 
         return rpcService.sendRpcCommand(username, tbToken, deviceId, request.method(), request.params())
-                .map(ResponseEntity::ok)
+                .map(response -> {
+                    if (response.contains("\"status\":\"error\"") || response.contains("\"error\"")) {
+                        return ResponseEntity.status(500).body(response);
+                    }
+                    return ResponseEntity.ok(response);
+                })
                 .defaultIfEmpty(ResponseEntity.badRequest().build());
     }
 }

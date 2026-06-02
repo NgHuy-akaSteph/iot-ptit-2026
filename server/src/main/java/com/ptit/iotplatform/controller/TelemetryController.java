@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -58,12 +59,16 @@ public class TelemetryController {
     // 2. Fetch latest telemetry - tries local DB first, falls back to ThingsBoard
     @GetMapping("/{deviceId}/telemetry/latest")
     public Mono<ResponseEntity<Map<String, List<List<Object>>>>> getLatestTelemetry(@PathVariable String deviceId) {
-        return Mono.justOrEmpty(telemetryService.getLatestTelemetry(deviceId))
-                .map(data -> ResponseEntity.ok(formatLatestResponse(data)))
-                .switchIfEmpty(Mono.defer(() -> {
+        return Mono.fromCallable(() -> telemetryService.getLatestTelemetry(deviceId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .<ResponseEntity<Map<String, List<List<Object>>>>>flatMap(opt -> {
+                    if (opt.isPresent()) {
+                        return Mono.just(ResponseEntity.ok(formatLatestResponse(opt.get())));
+                    }
                     // Fallback: Fetch from Thingsboard directly using the user's token
                     String token = SecurityContextHolder.getContext().getAuthentication().getCredentials().toString();
                     return thingsboardClient.getLatestTelemetry(token, deviceId, "temperature,humidity,dust_ug,gas_ppm,auto_mode,fan_level")
+                            .publishOn(Schedulers.boundedElastic())
                             .map(tbMap -> {
                                 TelemetryData data = parseThingsboardResponse(deviceId, tbMap);
                                 if (data != null) {
@@ -79,10 +84,10 @@ public class TelemetryController {
                                     );
                                     return ResponseEntity.ok(formatLatestResponse(data));
                                 }
-                                return ResponseEntity.notFound().build();
+                                return ResponseEntity.<Map<String, List<List<Object>>>>notFound().build();
                             });
-                }))
-                .defaultIfEmpty(ResponseEntity.notFound().build());
+                })
+                .defaultIfEmpty(ResponseEntity.<Map<String, List<List<Object>>>>notFound().build());
     }
 
     // 3. Fetch historical telemetry from local database

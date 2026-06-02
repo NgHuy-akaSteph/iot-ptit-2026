@@ -49,11 +49,12 @@ public class ThingsboardClient {
 
     public Mono<String> sendRpcCommand(String token, String deviceId, String method, Object params) {
         return webClient.post()
-                .uri("/api/plugins/rpc/twoway/{deviceId}", deviceId)
+                .uri("/api/plugins/rpc/oneway/{deviceId}", deviceId)
                 .header("X-Authorization", "Bearer " + token)
                 .bodyValue(new RpcRequest(method, params))
                 .retrieve()
                 .bodyToMono(String.class)
+                .defaultIfEmpty("{\"status\":\"success\"}")
                 .onErrorResume(e -> Mono.just("{\"status\":\"error\",\"message\":\"" + e.getMessage() + "\"}"));
     }
 }

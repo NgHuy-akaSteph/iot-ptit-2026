@@ -170,20 +170,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _handleAutoModeChange(bool enabled) async {
+    final oldAutoMode = _currentData.autoMode;
+
+    // Optimistically update the UI state
+    setState(() {
+      _currentData = EnvironmentData(
+        temperature: _currentData.temperature,
+        humidity: _currentData.humidity,
+        dustUg: _currentData.dustUg,
+        gasPpm: _currentData.gasPpm,
+        autoMode: enabled,
+        fanLevel: _currentData.fanLevel,
+      );
+    });
+
     final success = await _tbService.setAutoMode(enabled);
-    if (success) {
-      setState(() {
-        _currentData = EnvironmentData(
-          temperature: _currentData.temperature,
-          humidity: _currentData.humidity,
-          dustUg: _currentData.dustUg,
-          gasPpm: _currentData.gasPpm,
-          autoMode: enabled,
-          fanLevel: _currentData.fanLevel,
-        );
-      });
-    } else {
+    if (!success) {
+      // Rollback to previous state on failure
       if (mounted) {
+        setState(() {
+          _currentData = EnvironmentData(
+            temperature: _currentData.temperature,
+            humidity: _currentData.humidity,
+            dustUg: _currentData.dustUg,
+            gasPpm: _currentData.gasPpm,
+            autoMode: oldAutoMode,
+            fanLevel: _currentData.fanLevel,
+          );
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Không thể thay đổi chế độ tự động'),
@@ -195,14 +209,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _handleFanLevelChange(int level) async {
-    final success = await _tbService.setFanLevel(level);
-    if (!success && mounted) {
+    if (_currentData.autoMode) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Không thể thay đổi mức quạt'),
-          backgroundColor: Colors.redAccent,
+          content: Text('Vui lòng tắt chế độ tự động để điều chỉnh quạt'),
+          backgroundColor: Colors.orangeAccent,
         ),
       );
+      return;
+    }
+
+    final oldFanLevel = _currentData.fanLevel;
+
+    // Optimistically update the UI state
+    setState(() {
+      _currentData = EnvironmentData(
+        temperature: _currentData.temperature,
+        humidity: _currentData.humidity,
+        dustUg: _currentData.dustUg,
+        gasPpm: _currentData.gasPpm,
+        autoMode: _currentData.autoMode,
+        fanLevel: level,
+      );
+    });
+
+    final success = await _tbService.setFanLevel(level);
+    if (!success) {
+      // Rollback to previous state on failure
+      if (mounted) {
+        setState(() {
+          _currentData = EnvironmentData(
+            temperature: _currentData.temperature,
+            humidity: _currentData.humidity,
+            dustUg: _currentData.dustUg,
+            gasPpm: _currentData.gasPpm,
+            autoMode: _currentData.autoMode,
+            fanLevel: oldFanLevel,
+          );
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không thể thay đổi mức quạt'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     }
   }
 

@@ -346,8 +346,12 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
   }
   else if (method == "setFan" && !autoMode)
   {
-    String rawParam = doc["params"].as<String>();
-    fanLevel = rawParam.toInt();
+    if (doc["params"].is<int>()) {
+      fanLevel = doc["params"].as<int>();
+    } else {
+      String rawParam = doc["params"].as<String>();
+      fanLevel = rawParam.toInt();
+    }
     alarmOn(1, 100);
   }
 
