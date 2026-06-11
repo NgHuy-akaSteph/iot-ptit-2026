@@ -5,6 +5,8 @@ class EnvironmentData {
   final double gasPpm;
   final bool autoMode;
   final int fanLevel;
+  final bool mistOn;
+  final bool waterLow;
 
   EnvironmentData({
     this.temperature = 0.0,
@@ -13,6 +15,8 @@ class EnvironmentData {
     this.gasPpm = 0.0,
     this.autoMode = true,
     this.fanLevel = 1,
+    this.mistOn = false,
+    this.waterLow = false,
   });
 
   // Factory map JSON từ cấu trúc mảng 2 chiều của ThingsBoard
@@ -27,6 +31,8 @@ class EnvironmentData {
     double gas = currentData.gasPpm;
     bool autoMode = currentData.autoMode;
     int fanLevel = currentData.fanLevel;
+    bool mistOn = currentData.mistOn;
+    bool waterLow = currentData.waterLow;
 
     // Parse Nhiệt độ
     if (dataObj.containsKey('temperature')) {
@@ -66,6 +72,18 @@ class EnvironmentData {
       fanLevel = fanLevel.clamp(1, 3);
     }
 
+    // Parse Mist On
+    if (dataObj.containsKey('mist_on')) {
+      final val = dataObj['mist_on'][0][1];
+      mistOn = val == true || val == 'true';
+    }
+
+    // Parse Water Low
+    if (dataObj.containsKey('water_low')) {
+      final val = dataObj['water_low'][0][1];
+      waterLow = val == true || val == 'true';
+    }
+
     return EnvironmentData(
       temperature: temp,
       humidity: hum,
@@ -73,6 +91,8 @@ class EnvironmentData {
       gasPpm: gas,
       autoMode: autoMode,
       fanLevel: fanLevel,
+      mistOn: mistOn,
+      waterLow: waterLow,
     );
   }
 }

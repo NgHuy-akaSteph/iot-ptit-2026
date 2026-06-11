@@ -42,6 +42,12 @@ public class TelemetryData {
     @Column(name = "fan_level")
     private Integer fanLevel;
 
+    @Column(name = "mist_on")
+    private Boolean mistOn;
+
+    @Column(name = "water_low")
+    private Boolean waterLow;
+
     @Column(name = "ts", nullable = false)
     private Instant ts;
 }

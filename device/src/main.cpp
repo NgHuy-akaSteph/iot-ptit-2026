@@ -5,23 +5,27 @@
 #include <DHT.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <Preferences.h>
 
 // ==========================================
 // 1. CẤU HÌNH PINOUT PHẦN CỨNG
 // ==========================================
-#define DUST_LED_PIN 26
-#define DUST_ANALOG_PIN 35
-#define MQ135_ANALOG_PIN 34
+#define DUST_LED_PIN 25
+#define DUST_ANALOG_PIN 34
+#define MQ135_ANALOG_PIN 35
 #define DHTPIN 4
 #define DHTTYPE DHT11
 
 #define FAN_PWM_PIN 18
-#define FAN_RELAY_PIN 27
+#define FAN_RELAY_PIN 32
 #define BUZZER_PIN 23
 
 #define LED_GREEN 12
 #define LED_YELLOW 13
 #define LED_RED 14
+
+#define MIST_RELAY_PIN 33
+#define WATER_SWITCH_PIN 2
 
 // ==========================================
 // 2. CẤU HÌNH HỆ SỐ & MẠNG
@@ -56,8 +60,9 @@ struct SystemEnvironment
   float gas_ppm;
   float temperature;
   float humidity;
+  bool water_low;
 };
-SystemEnvironment currentEnv = {0.0, 0.0, 0.0, 0.0};
+SystemEnvironment currentEnv = {0.0, 0.0, 0.0, 0.0, false};
 SemaphoreHandle_t envMutex;
 
 bool autoMode = true;
@@ -65,6 +70,15 @@ int fanLevel = 0;
 int currentFanLevel = 0;
 unsigned long lastFanChangeTime = 0;
 bool buzzerOn = false;
+volatile bool mistOn = false;
+volatile bool waterLow = false;
+
+volatile float dustHigh = 150.0;
+volatile float dustMed = 75.0;
+volatile float gasHigh = 800.0;
+volatile float gasMed = 400.0;
+volatile float tempHigh = 35.0;
+volatile float humLow = 60.0;
 
 void connectMQTT();
 void onMqttMessage(char *topic, byte *payload, unsigned int length);
@@ -175,6 +189,25 @@ void mq135Task(void *pvParameters)
   }
 }
 
+void waterSwitchTask(void *pvParameters)
+{
+  for (;;)
+  {
+    bool localWaterLow = (digitalRead(WATER_SWITCH_PIN) == HIGH);
+    if (xSemaphoreTake(envMutex, portMAX_DELAY))
+    {
+      currentEnv.water_low = localWaterLow;
+      xSemaphoreGive(envMutex);
+    }
+    waterLow = localWaterLow;
+    if (waterLow && mistOn)
+    {
+      mistOn = false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+}
+
 // ==========================================
 // 6. TASKS: ĐIỀU KHIỂN & HIỂN THỊ
 // ==========================================
@@ -183,15 +216,27 @@ void controlTask(void *pvParameters)
   static int lastPollutionLevel = 0;
   for (;;)
   {
-    float dust = 0, gas = 0;
+    float dust = 0, gas = 0, temp = 0, hum = 0;
+    bool localWaterLow = false;
+    float localDustHigh = 150.0, localDustMed = 75.0, localGasHigh = 800.0, localGasMed = 400.0;
+    float localTempHigh = 35.0, localHumLow = 60.0;
     if (xSemaphoreTake(envMutex, portMAX_DELAY))
     {
       dust = currentEnv.dust_ug;
       gas = currentEnv.gas_ppm;
+      temp = currentEnv.temperature;
+      hum = currentEnv.humidity;
+      localWaterLow = currentEnv.water_low;
+      localDustHigh = dustHigh;
+      localDustMed = dustMed;
+      localGasHigh = gasHigh;
+      localGasMed = gasMed;
+      localTempHigh = tempHigh;
+      localHumLow = humLow;
       xSemaphoreGive(envMutex);
     }
 
-    if (dust > 150 || gas > 800)
+    if (dust > localDustHigh || gas > localGasHigh)
     {
       digitalWrite(LED_RED, HIGH);
       digitalWrite(LED_YELLOW, LOW);
@@ -204,7 +249,7 @@ void controlTask(void *pvParameters)
       }
       lastPollutionLevel = 3;
     }
-    else if (dust > 75 || gas > 400)
+    else if (dust > localDustMed || gas > localGasMed)
     {
       digitalWrite(LED_RED, LOW);
       digitalWrite(LED_YELLOW, HIGH);
@@ -258,8 +303,8 @@ void controlTask(void *pvParameters)
         else
           digitalWrite(FAN_RELAY_PIN, HIGH);
 
-        int percent = (currentFanLevel == 1)   ? 60
-                      : (currentFanLevel == 2) ? 80
+        int percent = (currentFanLevel == 1)   ? 70
+                      : (currentFanLevel == 2) ? 85
                       : (currentFanLevel == 3) ? 100
                                                : 0;
 
@@ -267,6 +312,24 @@ void controlTask(void *pvParameters)
         ledcWrite(pwmChannel, duty);
       }
     }
+
+    // Mist control logic
+    if (localWaterLow)
+    {
+      mistOn = false;
+    }
+    else if (autoMode)
+    {
+      if (temp > localTempHigh || (hum < localHumLow && hum > 0.0))
+      {
+        mistOn = true;
+      }
+      else
+      {
+        mistOn = false;
+      }
+    }
+    digitalWrite(MIST_RELAY_PIN, mistOn ? HIGH : LOW);
 
     vTaskDelay(pdMS_TO_TICKS(500));
   }
@@ -284,9 +347,18 @@ void displayTask(void *pvParameters)
       xSemaphoreGive(envMutex);
     }
 
-    // Dòng 1: Nhiệt độ & Độ ẩm
+    // Dòng 1: Nhiệt độ & Độ ẩm + Phun sương / Cạn nước
     lcd.setCursor(0, 0);
-    snprintf(rowBuffer, sizeof(rowBuffer), "T:%4.1fC H:%2.0f%%   ", tempEnv.temperature, tempEnv.humidity);
+    char statusChar[4] = "M:0";
+    if (tempEnv.water_low)
+    {
+      strcpy(statusChar, "W:L");
+    }
+    else if (mistOn)
+    {
+      strcpy(statusChar, "M:1");
+    }
+    snprintf(rowBuffer, sizeof(rowBuffer), "T:%4.1fCH:%2.0f%% %s", tempEnv.temperature, tempEnv.humidity, statusChar);
     lcd.print(rowBuffer);
 
     // Dòng 2: Bụi & Khí Gas
@@ -328,7 +400,7 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
   int lastSlash = topicStr.lastIndexOf('/');
   String requestId = topicStr.substring(lastSlash + 1);
 
-  StaticJsonDocument<200> doc;
+  StaticJsonDocument<512> doc;
   DeserializationError error = deserializeJson(doc, msg);
   if (error)
     return;
@@ -361,6 +433,73 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
       fanLevel = rawParam.toInt();
     }
     alarmOn(1, 100);
+  }
+  else if (method == "setMist" && !autoMode)
+  {
+    mistOn = doc["params"].as<bool>();
+    alarmOn(1, 100);
+  }
+  else if (method == "setThresholds")
+  {
+    JsonObject paramsObj = doc["params"].as<JsonObject>();
+    float newDustHigh = paramsObj.containsKey("dustHigh") ? paramsObj["dustHigh"].as<float>() : dustHigh;
+    float newDustMed = paramsObj.containsKey("dustMed") ? paramsObj["dustMed"].as<float>() : dustMed;
+    float newGasHigh = paramsObj.containsKey("gasHigh") ? paramsObj["gasHigh"].as<float>() : gasHigh;
+    float newGasMed = paramsObj.containsKey("gasMed") ? paramsObj["gasMed"].as<float>() : gasMed;
+    float newTempHigh = paramsObj.containsKey("tempHigh") ? paramsObj["tempHigh"].as<float>() : tempHigh;
+    float newHumLow = paramsObj.containsKey("humLow") ? paramsObj["humLow"].as<float>() : humLow;
+
+    if (xSemaphoreTake(envMutex, portMAX_DELAY))
+    {
+      dustHigh = newDustHigh;
+      dustMed = newDustMed;
+      gasHigh = newGasHigh;
+      gasMed = newGasMed;
+      tempHigh = newTempHigh;
+      humLow = newHumLow;
+      xSemaphoreGive(envMutex);
+    }
+
+    Preferences prefs;
+    prefs.begin("thresholds", false);
+    prefs.putFloat("dustHigh", newDustHigh);
+    prefs.putFloat("dustMed", newDustMed);
+    prefs.putFloat("gasHigh", newGasHigh);
+    prefs.putFloat("gasMed", newGasMed);
+    prefs.putFloat("tempHigh", newTempHigh);
+    prefs.putFloat("humLow", newHumLow);
+    prefs.end();
+
+    alarmOn(1, 150);
+  }
+  else if (method == "getThresholds")
+  {
+    StaticJsonDocument<256> responseDoc;
+    float localDustHigh = 150.0, localDustMed = 75.0, localGasHigh = 800.0, localGasMed = 400.0;
+    float localTempHigh = 35.0, localHumLow = 60.0;
+    if (xSemaphoreTake(envMutex, portMAX_DELAY))
+    {
+      localDustHigh = dustHigh;
+      localDustMed = dustMed;
+      localGasHigh = gasHigh;
+      localGasMed = gasMed;
+      localTempHigh = tempHigh;
+      localHumLow = humLow;
+      xSemaphoreGive(envMutex);
+    }
+    
+    responseDoc["dustHigh"] = localDustHigh;
+    responseDoc["dustMed"] = localDustMed;
+    responseDoc["gasHigh"] = localGasHigh;
+    responseDoc["gasMed"] = localGasMed;
+    responseDoc["tempHigh"] = localTempHigh;
+    responseDoc["humLow"] = localHumLow;
+    
+    char responseBuffer[256];
+    serializeJson(responseDoc, responseBuffer);
+    String responseTopic = "v1/devices/me/rpc/response/" + requestId;
+    mqtt.publish(responseTopic.c_str(), responseBuffer);
+    return;
   }
 
   String responseTopic = "v1/devices/me/rpc/response/" + requestId;
@@ -398,6 +537,8 @@ void mqttTask(void *pvParameters)
         doc["gas_ppm"] = serialized(String(tempEnv.gas_ppm, 2));
         doc["auto_mode"] = autoMode;
         doc["fan_level"] = currentFanLevel;
+        doc["mist_on"] = mistOn;
+        doc["water_low"] = tempEnv.water_low;
 
         char buffer[256];
         size_t n = serializeJson(doc, buffer);
@@ -420,8 +561,11 @@ void setup()
   pinMode(LED_YELLOW, OUTPUT);
   pinMode(LED_RED, OUTPUT);
   pinMode(FAN_RELAY_PIN, OUTPUT);
+  pinMode(MIST_RELAY_PIN, OUTPUT);
 
   digitalWrite(FAN_RELAY_PIN, LOW);
+  digitalWrite(MIST_RELAY_PIN, LOW);
+  pinMode(WATER_SWITCH_PIN, INPUT_PULLUP);
 
   ledcSetup(pwmChannel, pwmFreq, pwmResolution);
   ledcAttachPin(FAN_PWM_PIN, pwmChannel);
@@ -431,6 +575,16 @@ void setup()
   lcd.backlight();
 
   envMutex = xSemaphoreCreateMutex();
+
+  Preferences preferences;
+  preferences.begin("thresholds", true);
+  dustHigh = preferences.getFloat("dustHigh", 150.0);
+  dustMed = preferences.getFloat("dustMed", 75.0);
+  gasHigh = preferences.getFloat("gasHigh", 800.0);
+  gasMed = preferences.getFloat("gasMed", 400.0);
+  tempHigh = preferences.getFloat("tempHigh", 35.0);
+  humLow = preferences.getFloat("humLow", 60.0);
+  preferences.end();
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED)
@@ -446,6 +600,7 @@ void setup()
   xTaskCreatePinnedToCore(controlTask, "Control_Task", 4096, NULL, 1, NULL, 1);
   xTaskCreatePinnedToCore(mqttTask, "MQTT_Task", 4096, NULL, 2, NULL, 0);
   xTaskCreatePinnedToCore(displayTask, "Display_Task", 2048, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(waterSwitchTask, "Water_Task", 2048, NULL, 1, NULL, 1);
 }
 
 void loop()

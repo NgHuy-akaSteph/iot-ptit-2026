@@ -57,4 +57,15 @@ public class ThingsboardClient {
                 .defaultIfEmpty("{\"status\":\"success\"}")
                 .onErrorResume(e -> Mono.just("{\"status\":\"error\",\"message\":\"" + e.getMessage() + "\"}"));
     }
+
+    public Mono<String> sendTwoWayRpcCommand(String token, String deviceId, String method, Object params) {
+        return webClient.post()
+                .uri("/api/plugins/rpc/twoway/{deviceId}", deviceId)
+                .header("X-Authorization", "Bearer " + token)
+                .bodyValue(new RpcRequest(method, params))
+                .retrieve()
+                .bodyToMono(String.class)
+                .defaultIfEmpty("{\"status\":\"success\"}")
+                .onErrorResume(e -> Mono.just("{\"status\":\"error\",\"message\":\"" + e.getMessage() + "\"}"));
+    }
 }

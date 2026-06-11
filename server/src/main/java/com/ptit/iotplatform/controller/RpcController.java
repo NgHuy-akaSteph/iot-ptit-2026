@@ -36,4 +36,39 @@ public class RpcController {
                 })
                 .defaultIfEmpty(ResponseEntity.badRequest().build());
     }
+
+    @PostMapping("/{deviceId}/thresholds")
+    public Mono<ResponseEntity<String>> updateThresholds(
+            @PathVariable String deviceId,
+            @RequestBody Object thresholds) {
+
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        String username = auth.getName();
+        String tbToken = auth.getCredentials().toString();
+
+        return rpcService.sendRpcCommand(username, tbToken, deviceId, "setThresholds", thresholds)
+                .map(response -> {
+                    if (response.contains("\"status\":\"error\"") || response.contains("\"error\"")) {
+                        return ResponseEntity.status(500).body(response);
+                    }
+                    return ResponseEntity.ok(response);
+                })
+                .defaultIfEmpty(ResponseEntity.badRequest().build());
+    }
+
+    @GetMapping("/{deviceId}/thresholds")
+    public Mono<ResponseEntity<String>> getThresholds(@PathVariable String deviceId) {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        String username = auth.getName();
+        String tbToken = auth.getCredentials().toString();
+
+        return rpcService.sendTwoWayRpcCommand(username, tbToken, deviceId, "getThresholds", java.util.Map.of())
+                .map(response -> {
+                    if (response.contains("\"status\":\"error\"") || response.contains("\"error\"")) {
+                        return ResponseEntity.status(500).body(response);
+                    }
+                    return ResponseEntity.ok(response);
+                })
+                .defaultIfEmpty(ResponseEntity.badRequest().build());
+    }
 }

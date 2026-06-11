@@ -3,16 +3,20 @@ import 'package:flutter/material.dart';
 class ControlPanel extends StatelessWidget {
   final bool autoMode;
   final int fanLevel;
+  final bool mistOn;
   final Function(bool) onAutoModeChanged;
   final Function(double) onFanLevelChanged;
+  final Function(bool) onMistChanged;
   final bool isDarkMode;
 
   const ControlPanel({
     super.key,
     required this.autoMode,
     required this.fanLevel,
+    required this.mistOn,
     required this.onAutoModeChanged,
     required this.onFanLevelChanged,
+    required this.onMistChanged,
     this.isDarkMode = true,
   });
 
@@ -32,7 +36,7 @@ class ControlPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final segmentLabels = ['1', '2', '3'];
+    final segmentLabels = ['Thấp', 'Trung', 'Cao'];
     final segmentValues = [1, 2, 3];
 
     return Column(
@@ -110,6 +114,34 @@ class ControlPanel extends StatelessWidget {
                     ),
                   );
                 }),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildCard(
+          IgnorePointer(
+            ignoring: autoMode,
+            child: Opacity(
+              opacity: autoMode ? 0.4 : 1.0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Bơm phun sương',
+                    style: TextStyle(
+                      color: isDarkMode ? Colors.white : Colors.black87,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Switch(
+                    value: mistOn,
+                    onChanged: onMistChanged,
+                    activeTrackColor: Colors.tealAccent,
+                    activeThumbColor: Colors.white,
+                  ),
+                ],
               ),
             ),
           ),

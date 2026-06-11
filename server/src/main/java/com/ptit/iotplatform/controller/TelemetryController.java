@@ -2,6 +2,8 @@ package com.ptit.iotplatform.controller;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.ptit.iotplatform.model.TelemetryData;
+import com.ptit.iotplatform.model.AlertLog;
+import com.ptit.iotplatform.model.ThresholdHistory;
 import com.ptit.iotplatform.service.TelemetryService;
 import com.ptit.iotplatform.service.ThingsboardClient;
 import org.springframework.http.ResponseEntity;
@@ -35,7 +37,9 @@ public class TelemetryController {
             @JsonProperty("dust_ug") Double dustUg,
             @JsonProperty("gas_ppm") Double gasPpm,
             @JsonProperty("auto_mode") Boolean autoMode,
-            @JsonProperty("fan_level") Integer fanLevel
+            @JsonProperty("fan_level") Integer fanLevel,
+            @JsonProperty("mist_on") Boolean mistOn,
+            @JsonProperty("water_low") Boolean waterLow
     ) {}
 
     // 1. Webhook endpoint for ThingsBoard Rule Engine to push telemetry
@@ -50,7 +54,9 @@ public class TelemetryController {
                     payload.dustUg(),
                     payload.gasPpm(),
                     payload.autoMode(),
-                    payload.fanLevel()
+                    payload.fanLevel(),
+                    payload.mistOn(),
+                    payload.waterLow()
             );
         }
         return ResponseEntity.ok().build();
@@ -59,35 +65,41 @@ public class TelemetryController {
     // 2. Fetch latest telemetry - tries local DB first, falls back to ThingsBoard
     @GetMapping("/{deviceId}/telemetry/latest")
     public Mono<ResponseEntity<Map<String, List<List<Object>>>>> getLatestTelemetry(@PathVariable String deviceId) {
-        return Mono.fromCallable(() -> telemetryService.getLatestTelemetry(deviceId))
-                .subscribeOn(Schedulers.boundedElastic())
-                .<ResponseEntity<Map<String, List<List<Object>>>>>flatMap(opt -> {
-                    if (opt.isPresent()) {
-                        return Mono.just(ResponseEntity.ok(formatLatestResponse(opt.get())));
+        String token = SecurityContextHolder.getContext().getAuthentication().getCredentials().toString();
+        
+        return thingsboardClient.getLatestTelemetry(token, deviceId, "temperature,humidity,dust_ug,gas_ppm,auto_mode,fan_level,mist_on,water_low")
+                .publishOn(Schedulers.boundedElastic())
+                .map(tbMap -> {
+                    TelemetryData data = parseThingsboardResponse(deviceId, tbMap);
+                    if (data != null) {
+                        // Avoid duplicates if ts matches
+                        boolean exists = telemetryService.existsByDeviceIdAndTs(deviceId, data.getTs());
+                        if (!exists) {
+                            telemetryService.saveTelemetry(
+                                    data.getDeviceId(),
+                                    data.getTemperature(),
+                                    data.getHumidity(),
+                                    data.getDustUg(),
+                                    data.getGasPpm(),
+                                    data.getAutoMode(),
+                                    data.getFanLevel(),
+                                    data.getMistOn(),
+                                    data.getWaterLow(),
+                                    data.getTs()
+                            );
+                        }
+                        return ResponseEntity.ok(formatLatestResponse(data));
                     }
-                    // Fallback: Fetch from Thingsboard directly using the user's token
-                    String token = SecurityContextHolder.getContext().getAuthentication().getCredentials().toString();
-                    return thingsboardClient.getLatestTelemetry(token, deviceId, "temperature,humidity,dust_ug,gas_ppm,auto_mode,fan_level")
-                            .publishOn(Schedulers.boundedElastic())
-                            .map(tbMap -> {
-                                TelemetryData data = parseThingsboardResponse(deviceId, tbMap);
-                                if (data != null) {
-                                    // Save to DB so next request hits DB
-                                    telemetryService.saveTelemetry(
-                                            data.getDeviceId(),
-                                            data.getTemperature(),
-                                            data.getHumidity(),
-                                            data.getDustUg(),
-                                            data.getGasPpm(),
-                                            data.getAutoMode(),
-                                            data.getFanLevel()
-                                    );
-                                    return ResponseEntity.ok(formatLatestResponse(data));
-                                }
-                                return ResponseEntity.<Map<String, List<List<Object>>>>notFound().build();
-                            });
+                    
+                    // Fallback to local DB if thingsboard returns empty
+                    return telemetryService.getLatestTelemetry(deviceId)
+                            .map(localData -> ResponseEntity.ok(formatLatestResponse(localData)))
+                            .orElseGet(() -> ResponseEntity.notFound().build());
                 })
-                .defaultIfEmpty(ResponseEntity.<Map<String, List<List<Object>>>>notFound().build());
+                .onErrorResume(e -> Mono.fromCallable(() -> telemetryService.getLatestTelemetry(deviceId))
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .map(opt -> opt.map(localData -> ResponseEntity.ok(formatLatestResponse(localData)))
+                                .orElseGet(() -> ResponseEntity.notFound().build())));
     }
 
     // 3. Fetch historical telemetry from local database
@@ -109,6 +121,21 @@ public class TelemetryController {
         return ResponseEntity.ok(formatHistoryResponse(history));
     }
 
+    @GetMapping("/{deviceId}/alerts/history")
+    public ResponseEntity<List<AlertLog>> getAlertHistory(@PathVariable String deviceId) {
+        return ResponseEntity.ok(telemetryService.getAlertHistory(deviceId));
+    }
+
+    @GetMapping("/{deviceId}/alerts/active")
+    public ResponseEntity<List<AlertLog>> getActiveAlerts(@PathVariable String deviceId) {
+        return ResponseEntity.ok(telemetryService.getActiveAlerts(deviceId));
+    }
+
+    @GetMapping("/{deviceId}/thresholds/history")
+    public ResponseEntity<List<ThresholdHistory>> getThresholdHistory(@PathVariable String deviceId) {
+        return ResponseEntity.ok(telemetryService.getThresholdHistory(deviceId));
+    }
+
     private Map<String, List<List<Object>>> formatLatestResponse(TelemetryData data) {
         if (data == null) return Collections.emptyMap();
         long ts = data.getTs().toEpochMilli();
@@ -118,7 +145,9 @@ public class TelemetryController {
             "dust_ug", List.of(List.of(ts, data.getDustUg() != null ? data.getDustUg() : 0.0)),
             "gas_ppm", List.of(List.of(ts, data.getGasPpm() != null ? data.getGasPpm() : 0.0)),
             "auto_mode", List.of(List.of(ts, data.getAutoMode() != null ? data.getAutoMode() : true)),
-            "fan_level", List.of(List.of(ts, data.getFanLevel() != null ? data.getFanLevel() : 1))
+            "fan_level", List.of(List.of(ts, data.getFanLevel() != null ? data.getFanLevel() : 1)),
+            "mist_on", List.of(List.of(ts, data.getMistOn() != null ? data.getMistOn() : false)),
+            "water_low", List.of(List.of(ts, data.getWaterLow() != null ? data.getWaterLow() : false))
         );
     }
 
@@ -152,33 +181,67 @@ public class TelemetryController {
 
     private TelemetryData parseThingsboardResponse(String deviceId, Map<String, Object> tbMap) {
         try {
-            TelemetryData.TelemetryDataBuilder builder = TelemetryData.builder().deviceId(deviceId).ts(Instant.now());
+            TelemetryData.TelemetryDataBuilder builder = TelemetryData.builder().deviceId(deviceId);
+            long maxTs = 0;
 
             if (tbMap.containsKey("temperature")) {
                 List<Map<String, Object>> list = (List<Map<String, Object>>) tbMap.get("temperature");
-                if (!list.isEmpty()) builder.temperature(Double.parseDouble(list.getFirst().get("value").toString()));
+                if (!list.isEmpty()) {
+                    builder.temperature(Double.parseDouble(list.getFirst().get("value").toString()));
+                    maxTs = Math.max(maxTs, Long.parseLong(list.getFirst().get("ts").toString()));
+                }
             }
             if (tbMap.containsKey("humidity")) {
                 List<Map<String, Object>> list = (List<Map<String, Object>>) tbMap.get("humidity");
-                if (!list.isEmpty()) builder.humidity(Double.parseDouble(list.getFirst().get("value").toString()));
+                if (!list.isEmpty()) {
+                    builder.humidity(Double.parseDouble(list.getFirst().get("value").toString()));
+                    maxTs = Math.max(maxTs, Long.parseLong(list.getFirst().get("ts").toString()));
+                }
             }
             if (tbMap.containsKey("dust_ug")) {
                 List<Map<String, Object>> list = (List<Map<String, Object>>) tbMap.get("dust_ug");
-                if (!list.isEmpty()) builder.dustUg(Double.parseDouble(list.getFirst().get("value").toString()));
+                if (!list.isEmpty()) {
+                    builder.dustUg(Double.parseDouble(list.getFirst().get("value").toString()));
+                    maxTs = Math.max(maxTs, Long.parseLong(list.getFirst().get("ts").toString()));
+                }
             }
             if (tbMap.containsKey("gas_ppm")) {
                 List<Map<String, Object>> list = (List<Map<String, Object>>) tbMap.get("gas_ppm");
-                if (!list.isEmpty()) builder.gasPpm(Double.parseDouble(list.getFirst().get("value").toString()));
+                if (!list.isEmpty()) {
+                    builder.gasPpm(Double.parseDouble(list.getFirst().get("value").toString()));
+                    maxTs = Math.max(maxTs, Long.parseLong(list.getFirst().get("ts").toString()));
+                }
             }
             if (tbMap.containsKey("auto_mode")) {
                 List<Map<String, Object>> list = (List<Map<String, Object>>) tbMap.get("auto_mode");
-                if (!list.isEmpty()) builder.autoMode(Boolean.parseBoolean(list.getFirst().get("value").toString()));
+                if (!list.isEmpty()) {
+                    builder.autoMode(Boolean.parseBoolean(list.getFirst().get("value").toString()));
+                    maxTs = Math.max(maxTs, Long.parseLong(list.getFirst().get("ts").toString()));
+                }
             }
             if (tbMap.containsKey("fan_level")) {
                 List<Map<String, Object>> list = (List<Map<String, Object>>) tbMap.get("fan_level");
-                if (!list.isEmpty()) builder.fanLevel(Integer.parseInt(list.getFirst().get("value").toString()));
+                if (!list.isEmpty()) {
+                    builder.fanLevel(Integer.parseInt(list.getFirst().get("value").toString()));
+                    maxTs = Math.max(maxTs, Long.parseLong(list.getFirst().get("ts").toString()));
+                }
+            }
+            if (tbMap.containsKey("mist_on")) {
+                List<Map<String, Object>> list = (List<Map<String, Object>>) tbMap.get("mist_on");
+                if (!list.isEmpty()) {
+                    builder.mistOn(Boolean.parseBoolean(list.getFirst().get("value").toString()));
+                    maxTs = Math.max(maxTs, Long.parseLong(list.getFirst().get("ts").toString()));
+                }
+            }
+            if (tbMap.containsKey("water_low")) {
+                List<Map<String, Object>> list = (List<Map<String, Object>>) tbMap.get("water_low");
+                if (!list.isEmpty()) {
+                    builder.waterLow(Boolean.parseBoolean(list.getFirst().get("value").toString()));
+                    maxTs = Math.max(maxTs, Long.parseLong(list.getFirst().get("ts").toString()));
+                }
             }
 
+            builder.ts(maxTs > 0 ? Instant.ofEpochMilli(maxTs) : Instant.now());
             return builder.build();
         } catch (Exception e) {
             return null;

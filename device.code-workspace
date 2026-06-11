@@ -1,14 +1,17 @@
 {
-	"folders": [
-		{
-			"path": "device"
-		},
-		{
-			"path": "client"
-		},
-		{
-			"path": "server"
-		}
-	],
-	"settings": {}
+  "folders": [
+    {
+      "path": "device",
+    },
+    {
+      "path": "client",
+    },
+    {
+      "path": "server",
+    },
+    {
+      "path": "../CeNN",
+    },
+  ],
+  "settings": {},
 }

@@ -18,6 +18,8 @@ public interface TelemetryRepository extends JpaRepository<TelemetryData, UUID> 
 
     Optional<TelemetryData> findFirstByDeviceIdOrderByTsDesc(String deviceId);
 
+    boolean existsByDeviceIdAndTs(String deviceId, Instant ts);
+
     @Query("SELECT t FROM TelemetryData t WHERE t.deviceId = :deviceId ORDER BY t.ts DESC")
     List<TelemetryData> findLatestByDeviceId(String deviceId, Pageable pageable);
 }

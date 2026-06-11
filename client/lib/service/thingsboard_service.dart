@@ -104,6 +104,52 @@ class ThingsBoardService {
     return await _sendRpcCommand('setFan', level);
   }
 
+  Future<bool> setMist(bool enabled) async {
+    return await _sendRpcCommand('setMist', enabled);
+  }
+
+  Future<List<dynamic>?> fetchAlertHistory() async {
+    try {
+      final token = await _authService.getToken();
+      if (token == null) return null;
+
+      final response = await _dio.get(
+        '$_baseUrl/devices/$deviceId/alerts/history',
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        return response.data as List<dynamic>;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<List<dynamic>?> fetchThresholdHistory() async {
+    try {
+      final token = await _authService.getToken();
+      if (token == null) return null;
+
+      final response = await _dio.get(
+        '$_baseUrl/devices/$deviceId/thresholds/history',
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        return response.data as List<dynamic>;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   Future<bool> _sendRpcCommand(String method, dynamic params) async {
     try {
       final token = await _authService.getToken();
@@ -122,11 +168,6 @@ class ThingsBoardService {
 
       return response.statusCode == 200;
     } catch (e) {
-      if (e is DioException) {
-        print('=== RPC ERROR ===: Status: ${e.response?.statusCode} | Body: ${e.response?.data}');
-      } else {
-        print('=== RPC ERROR ===: $e');
-      }
       return false;
     }
   }
