@@ -131,6 +131,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                     tempHigh: widget.tempHigh,
                     humLow: widget.humLow,
                     onThresholdsSaved: widget.onThresholdsSaved,
+                    isDarkMode: widget.isDarkMode,
                   ),
                 ),
               );

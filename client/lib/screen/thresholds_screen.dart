@@ -8,6 +8,7 @@ class ThresholdsScreen extends StatefulWidget {
   final double tempHigh;
   final double humLow;
   final Future<bool> Function(Map<String, double>) onThresholdsSaved;
+  final bool isDarkMode;
 
   const ThresholdsScreen({
     super.key,
@@ -18,6 +19,7 @@ class ThresholdsScreen extends StatefulWidget {
     required this.tempHigh,
     required this.humLow,
     required this.onThresholdsSaved,
+    required this.isDarkMode,
   });
 
   @override
@@ -159,7 +161,7 @@ class _ThresholdsScreenState extends State<ThresholdsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final isDarkMode = widget.isDarkMode;
 
     return Scaffold(
       backgroundColor: isDarkMode ? const Color(0xFF0D0D0D) : Colors.grey.shade50,
