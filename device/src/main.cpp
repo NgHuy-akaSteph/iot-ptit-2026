@@ -25,7 +25,7 @@
 // 2. CẤU HÌNH HỆ SỐ & MẠNG
 // ==========================================
 const float V_C = 5.0, R_L = 10.0, R_0 = 1.87;
-const float CONST_A = 116.602, CONST_B = -2.769;
+const float CONST_A = 99.042, CONST_B = -1.518;
 const float EMA_ALPHA = 0.1;
 
 const int pwmChannel = 4;
