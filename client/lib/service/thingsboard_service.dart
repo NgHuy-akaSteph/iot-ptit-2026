@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'auth_service.dart';
 
@@ -147,6 +148,51 @@ class ThingsBoardService {
       return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getThresholds() async {
+    try {
+      final token = await _authService.getToken();
+      if (token == null) return null;
+
+      final response = await _dio.get(
+        '$_baseUrl/devices/$deviceId/thresholds',
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        if (data is Map<String, dynamic>) {
+          return data;
+        } else if (data is String) {
+          return jsonDecode(data) as Map<String, dynamic>;
+        }
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<bool> updateThresholds(Map<String, double> thresholds) async {
+    try {
+      final token = await _authService.getToken();
+      if (token == null) return false;
+
+      final response = await _dio.post(
+        '$_baseUrl/devices/$deviceId/thresholds',
+        data: thresholds,
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
     }
   }
 

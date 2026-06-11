@@ -10,15 +10,7 @@ import '../widgets/telemetry_chart.dart';
 import '../widgets/time_range_selector.dart';
 import '../service/theme_service.dart';
 
-// ==========================================
-// Ngưỡng mặc định lấy từ device/src/main.cpp
-// ==========================================
-class _Thresholds {
-  static const double dustHigh = 150.0;  // µg/m³ — mức nguy hiểm
-  static const double dustMed  = 75.0;   // µg/m³ — mức cảnh báo
-  static const double gasHigh  = 800.0;  // ppm   — mức nguy hiểm
-  static const double gasMed   = 400.0;  // ppm   — mức cảnh báo
-}
+// Thresholds are loaded dynamically from the device settings.
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -55,6 +47,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> _thresholdLogs = [];
   bool _isLoadingLogs = false;
 
+  double _dustHigh = 150.0;
+  double _dustMed = 75.0;
+  double _gasHigh = 800.0;
+  double _gasMed = 400.0;
+  double _tempHigh = 35.0;
+  double _humLow = 60.0;
+
   @override
   void initState() {
     super.initState();
@@ -73,14 +72,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   /// Kiểm tra bụi mịn có vượt ngưỡng không
-  bool get _isDustAlert => _currentData.dustUg > _Thresholds.dustHigh;
+  bool get _isDustAlert => _currentData.dustUg > _dustHigh;
   bool get _isDustWarning =>
-      !_isDustAlert && _currentData.dustUg > _Thresholds.dustMed;
+      !_isDustAlert && _currentData.dustUg > _dustMed;
 
   /// Kiểm tra khí gas có vượt ngưỡng không
-  bool get _isGasAlert => _currentData.gasPpm > _Thresholds.gasHigh;
+  bool get _isGasAlert => _currentData.gasPpm > _gasHigh;
   bool get _isGasWarning =>
-      !_isGasAlert && _currentData.gasPpm > _Thresholds.gasMed;
+      !_isGasAlert && _currentData.gasPpm > _gasMed;
 
   /// true nếu có bất kỳ cảm biến nào vượt ngưỡng cao (nguy hiểm)
   bool get _hasHighAlert => _isDustAlert || _isGasAlert;
@@ -125,9 +124,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  Future<void> _fetchThresholds() async {
+    try {
+      final thresholds = await _tbService.getThresholds();
+      if (thresholds != null) {
+        setState(() {
+          _dustHigh = double.tryParse(thresholds['dustHigh'].toString()) ?? _dustHigh;
+          _dustMed = double.tryParse(thresholds['dustMed'].toString()) ?? _dustMed;
+          _gasHigh = double.tryParse(thresholds['gasHigh'].toString()) ?? _gasHigh;
+          _gasMed = double.tryParse(thresholds['gasMed'].toString()) ?? _gasMed;
+          _tempHigh = double.tryParse(thresholds['tempHigh'].toString()) ?? _tempHigh;
+          _humLow = double.tryParse(thresholds['humLow'].toString()) ?? _humLow;
+        });
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  Future<bool> _handleThresholdsSaved(Map<String, double> newThresholds) async {
+    final success = await _tbService.updateThresholds(newThresholds);
+    if (success) {
+      setState(() {
+        _dustHigh = newThresholds['dustHigh'] ?? _dustHigh;
+        _dustMed = newThresholds['dustMed'] ?? _dustMed;
+        _gasHigh = newThresholds['gasHigh'] ?? _gasHigh;
+        _gasMed = newThresholds['gasMed'] ?? _gasMed;
+        _tempHigh = newThresholds['tempHigh'] ?? _tempHigh;
+        _humLow = newThresholds['humLow'] ?? _humLow;
+      });
+      if (_currentIndex == 2) {
+        _fetchLogs();
+      }
+    }
+    return success;
+  }
+
   Future<void> _initializeConnection() async {
     try {
       await _wsService.connect();
+      _fetchThresholds();
 
       _wsService.telemetryStream.listen((data) {
         setState(() {
@@ -418,14 +454,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final messages = <String>[];
     if (_isDustAlert) {
-      messages.add('Bụi mịn ${_currentData.dustUg.toStringAsFixed(0)} µg/m³ (ngưỡng ${_Thresholds.dustHigh.toInt()})');
+      messages.add('Bụi mịn ${_currentData.dustUg.toStringAsFixed(0)} µg/m³ (ngưỡng ${_dustHigh.toInt()})');
     } else if (_isDustWarning) {
-      messages.add('Bụi mịn ${_currentData.dustUg.toStringAsFixed(0)} µg/m³ (ngưỡng ${_Thresholds.dustMed.toInt()})');
+      messages.add('Bụi mịn ${_currentData.dustUg.toStringAsFixed(0)} µg/m³ (ngưỡng ${_dustMed.toInt()})');
     }
     if (_isGasAlert) {
-      messages.add('Khí gas ${_currentData.gasPpm.toStringAsFixed(0)} ppm (ngưỡng ${_Thresholds.gasHigh.toInt()})');
+      messages.add('Khí gas ${_currentData.gasPpm.toStringAsFixed(0)} ppm (ngưỡng ${_gasHigh.toInt()})');
     } else if (_isGasWarning) {
-      messages.add('Khí gas ${_currentData.gasPpm.toStringAsFixed(0)} ppm (ngưỡng ${_Thresholds.gasMed.toInt()})');
+      messages.add('Khí gas ${_currentData.gasPpm.toStringAsFixed(0)} ppm (ngưỡng ${_gasMed.toInt()})');
     }
 
     return AnimatedContainer(
@@ -472,6 +508,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildOverviewTab() {
     return RefreshIndicator(
       onRefresh: () async {
+        _fetchThresholds();
         final telemetry = await _tbService.getLatestTelemetry();
         if (telemetry != null && mounted) {
           setState(() {
@@ -670,6 +707,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return SettingsPanel(
       isDarkMode: _isDarkMode,
       onThemeChanged: _handleThemeChange,
+      dustHigh: _dustHigh,
+      dustMed: _dustMed,
+      gasHigh: _gasHigh,
+      gasMed: _gasMed,
+      tempHigh: _tempHigh,
+      humLow: _humLow,
+      onThresholdsSaved: _handleThresholdsSaved,
     );
   }
 
