@@ -5,6 +5,7 @@
 #include <DHT.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <Preferences.h>
 
 // ==========================================
 // 1. CẤU HÌNH PINOUT PHẦN CỨNG
@@ -18,8 +19,14 @@
 #define FAN_PWM_PIN 18
 #define FAN_RELAY_PIN 32
 
+#define BUZZER_PIN 23
+#define LED_GREEN 12
+#define LED_YELLOW 13
+#define LED_RED 14
+
 #define MIST_RELAY_PIN 33
 #define WATER_SWITCH_PIN 2
+#define WATER_LOW_ACTIVE_STATE LOW 
 
 // ==========================================
 // 2. CẤU HÌNH HỆ SỐ & MẠNG
@@ -63,9 +70,16 @@ int currentFanLevel = 0;
 unsigned long lastFanChangeTime = 0;
 volatile bool mistOn = false;
 volatile bool waterLow = false;
+volatile float tempHigh = 35.0;
+volatile float humLow = 60.0;
+volatile float dustHigh = 150.0;
+volatile float dustMed = 75.0;
+volatile float gasHigh = 800.0;
+volatile float gasMed = 400.0;
 
 void connectMQTT();
 void onMqttMessage(char *topic, byte *payload, unsigned int length);
+void alarmOn(int times, int duration = 100);
 
 // ==========================================
 // 4. HÀM CÔNG CỤ (UTILITIES)
@@ -77,7 +91,16 @@ float filterEMA(float newValue, float previousValue, float alpha)
   return (alpha * newValue) + ((1.0 - alpha) * previousValue);
 }
 
-// alarmOn removed
+void alarmOn(int times, int duration)
+{
+  for (int i = 0; i < times; i++)
+  {
+    tone(BUZZER_PIN, 2500);
+    vTaskDelay(pdMS_TO_TICKS(duration));
+    noTone(BUZZER_PIN);
+    vTaskDelay(pdMS_TO_TICKS(duration));
+  }
+}
 
 // ==========================================
 // 5. TASKS: ĐỌC CẢM BIẾN
@@ -168,7 +191,7 @@ void waterSwitchTask(void *pvParameters)
 {
   for (;;)
   {
-    bool localWaterLow = (digitalRead(WATER_SWITCH_PIN) == HIGH);
+    bool localWaterLow = (digitalRead(WATER_SWITCH_PIN) == WATER_LOW_ACTIVE_STATE);
     if (xSemaphoreTake(envMutex, portMAX_DELAY))
     {
       currentEnv.water_low = localWaterLow;
@@ -188,8 +211,60 @@ void waterSwitchTask(void *pvParameters)
 // ==========================================
 void controlTask(void *pvParameters)
 {
+  static int lastPollutionLevel = 0;
   for (;;)
   {
+    float temp = 0, hum = 0, dust = 0, gas = 0;
+    float localTempHigh = 35.0, localHumLow = 60.0;
+    float localDustHigh = 150.0, localDustMed = 75.0, localGasHigh = 800.0, localGasMed = 400.0;
+    if (xSemaphoreTake(envMutex, portMAX_DELAY))
+    {
+      temp = currentEnv.temperature;
+      hum = currentEnv.humidity;
+      dust = currentEnv.dust_ug;
+      gas = currentEnv.gas_ppm;
+      localTempHigh = tempHigh;
+      localHumLow = humLow;
+      localDustHigh = dustHigh;
+      localDustMed = dustMed;
+      localGasHigh = gasHigh;
+      localGasMed = gasMed;
+      xSemaphoreGive(envMutex);
+    }
+
+    int currentPollutionLevel = 0;
+    if (dust > localDustHigh || gas > localGasHigh)
+    {
+      currentPollutionLevel = 3;
+      digitalWrite(LED_RED, HIGH);
+      digitalWrite(LED_YELLOW, LOW);
+      digitalWrite(LED_GREEN, LOW);
+    }
+    else if (dust > localDustMed || gas > localGasMed)
+    {
+      currentPollutionLevel = 2;
+      digitalWrite(LED_RED, LOW);
+      digitalWrite(LED_YELLOW, HIGH);
+      digitalWrite(LED_GREEN, LOW);
+    }
+    else
+    {
+      currentPollutionLevel = 0;
+      digitalWrite(LED_RED, LOW);
+      digitalWrite(LED_YELLOW, LOW);
+      digitalWrite(LED_GREEN, HIGH);
+    }
+
+    if (autoMode)
+    {
+      fanLevel = currentPollutionLevel;
+      if (currentPollutionLevel == 3 && lastPollutionLevel != 3)
+      {
+        alarmOn(3, 150);
+      }
+    }
+    lastPollutionLevel = currentPollutionLevel;
+
     if (fanLevel != currentFanLevel)
     {
       currentFanLevel = fanLevel;
@@ -210,6 +285,17 @@ void controlTask(void *pvParameters)
     if (waterLow)
     {
       mistOn = false;
+    }
+    else if (autoMode)
+    {
+      if (temp > localTempHigh || (hum < localHumLow && hum > 0.0))
+      {
+        mistOn = true;
+      }
+      else
+      {
+        mistOn = false;
+      }
     }
     digitalWrite(MIST_RELAY_PIN, mistOn ? HIGH : LOW);
 
@@ -293,6 +379,14 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
   if (method == "setAutoMode")
   {
     autoMode = doc["params"].as<bool>();
+    if (autoMode)
+    {
+      alarmOn(2, 80);
+    }
+    else
+    {
+      alarmOn(1, 300);
+    }
   }
   else if (method == "setFan")
   {
@@ -302,10 +396,74 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
       String rawParam = doc["params"].as<String>();
       fanLevel = rawParam.toInt();
     }
+    alarmOn(1, 100);
   }
   else if (method == "setMist")
   {
     mistOn = doc["params"].as<bool>();
+    alarmOn(1, 100);
+  }
+  else if (method == "setThresholds")
+  {
+    JsonObject paramsObj = doc["params"].as<JsonObject>();
+    float newTempHigh = paramsObj.containsKey("tempHigh") ? paramsObj["tempHigh"].as<float>() : tempHigh;
+    float newHumLow = paramsObj.containsKey("humLow") ? paramsObj["humLow"].as<float>() : humLow;
+    float newDustHigh = paramsObj.containsKey("dustHigh") ? paramsObj["dustHigh"].as<float>() : dustHigh;
+    float newDustMed = paramsObj.containsKey("dustMed") ? paramsObj["dustMed"].as<float>() : dustMed;
+    float newGasHigh = paramsObj.containsKey("gasHigh") ? paramsObj["gasHigh"].as<float>() : gasHigh;
+    float newGasMed = paramsObj.containsKey("gasMed") ? paramsObj["gasMed"].as<float>() : gasMed;
+
+    if (xSemaphoreTake(envMutex, portMAX_DELAY))
+    {
+      tempHigh = newTempHigh;
+      humLow = newHumLow;
+      dustHigh = newDustHigh;
+      dustMed = newDustMed;
+      gasHigh = newGasHigh;
+      gasMed = newGasMed;
+      xSemaphoreGive(envMutex);
+    }
+
+    Preferences prefs;
+    prefs.begin("thresholds", false);
+    prefs.putFloat("tempHigh", newTempHigh);
+    prefs.putFloat("humLow", newHumLow);
+    prefs.putFloat("dustHigh", newDustHigh);
+    prefs.putFloat("dustMed", newDustMed);
+    prefs.putFloat("gasHigh", newGasHigh);
+    prefs.putFloat("gasMed", newGasMed);
+    prefs.end();
+
+    alarmOn(1, 150);
+  }
+  else if (method == "getThresholds")
+  {
+    StaticJsonDocument<256> responseDoc;
+    float localTempHigh = 35.0, localHumLow = 60.0;
+    float localDustHigh = 150.0, localDustMed = 75.0, localGasHigh = 800.0, localGasMed = 400.0;
+    if (xSemaphoreTake(envMutex, portMAX_DELAY))
+    {
+      localTempHigh = tempHigh;
+      localHumLow = humLow;
+      localDustHigh = dustHigh;
+      localDustMed = dustMed;
+      localGasHigh = gasHigh;
+      localGasMed = gasMed;
+      xSemaphoreGive(envMutex);
+    }
+    
+    responseDoc["tempHigh"] = localTempHigh;
+    responseDoc["humLow"] = localHumLow;
+    responseDoc["dustHigh"] = localDustHigh;
+    responseDoc["dustMed"] = localDustMed;
+    responseDoc["gasHigh"] = localGasHigh;
+    responseDoc["gasMed"] = localGasMed;
+    
+    char responseBuffer[256];
+    serializeJson(responseDoc, responseBuffer);
+    String responseTopic = "v1/devices/me/rpc/response/" + requestId;
+    mqtt.publish(responseTopic.c_str(), responseBuffer);
+    return;
   }
 
   String responseTopic = "v1/devices/me/rpc/response/" + requestId;
@@ -365,9 +523,16 @@ void setup()
   pinMode(DUST_LED_PIN, OUTPUT);
   pinMode(FAN_RELAY_PIN, OUTPUT);
   pinMode(MIST_RELAY_PIN, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
 
   digitalWrite(FAN_RELAY_PIN, LOW);
   digitalWrite(MIST_RELAY_PIN, LOW);
+  digitalWrite(LED_GREEN, HIGH);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_RED, LOW);
   pinMode(WATER_SWITCH_PIN, INPUT_PULLUP);
 
   ledcSetup(pwmChannel, pwmFreq, pwmResolution);
@@ -378,6 +543,16 @@ void setup()
   lcd.backlight();
 
   envMutex = xSemaphoreCreateMutex();
+
+  Preferences preferences;
+  preferences.begin("thresholds", true);
+  tempHigh = preferences.getFloat("tempHigh", 35.0);
+  humLow = preferences.getFloat("humLow", 60.0);
+  dustHigh = preferences.getFloat("dustHigh", 150.0);
+  dustMed = preferences.getFloat("dustMed", 75.0);
+  gasHigh = preferences.getFloat("gasHigh", 800.0);
+  gasMed = preferences.getFloat("gasMed", 400.0);
+  preferences.end();
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED)
